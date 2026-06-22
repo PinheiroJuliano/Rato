@@ -1,9 +1,11 @@
 using System;
 using System.IO;
 using System.Media;
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Threading;
 
@@ -24,6 +26,20 @@ public partial class MainWindow : Window
     private bool _squeakEnabled = true;
     private bool _musicEnabled = false;
     private double _currentOpacity = 1.0;
+
+    private System.Windows.Forms.NotifyIcon? _notifyIcon;
+    private HwndSource? _source;
+
+    [DllImport("user32.dll")]
+    private static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
+
+    [DllImport("user32.dll")]
+    private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
+
+    private const int HOTKEY_ID = 9000;
+    private const uint MOD_ALT = 0x0001;
+    private const uint MOD_CONTROL = 0x0002;
+    private const uint VK_R = 0x52; // Key 'R'
 
     public MainWindow()
     {
@@ -74,6 +90,9 @@ public partial class MainWindow : Window
             Interval = TimeSpan.FromMilliseconds(16)
         };
         _dvdTimer.Tick += DvdTimer_Tick;
+
+        // Inicializar o ícone na bandeja do sistema (System Tray)
+        InitializeTrayIcon();
     }
 
     private void RatoImage_MouseDown(object sender, MouseButtonEventArgs e)
@@ -238,7 +257,7 @@ public partial class MainWindow : Window
         this.Height = size + 10;
     }
 
-    private void UpdateSizeMenuChecked(MenuItem checkedItem)
+    private void UpdateSizeMenuChecked(System.Windows.Controls.MenuItem checkedItem)
     {
         MenuSizeSmall.IsChecked = false;
         MenuSizeMedium.IsChecked = false;
@@ -275,7 +294,7 @@ public partial class MainWindow : Window
 
     private void Opacity_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is MenuItem item && double.TryParse(item.Tag as string, out double val))
+        if (sender is System.Windows.Controls.MenuItem item && double.TryParse(item.Tag as string, out double val))
         {
             _currentOpacity = val;
             this.Opacity = val;
@@ -289,11 +308,121 @@ public partial class MainWindow : Window
 
     private void Sair_Click(object sender, RoutedEventArgs e)
     {
+        Close();
+    }
+
+    private void Ocultar_Click(object sender, RoutedEventArgs e)
+    {
+        this.Hide();
+    }
+
+    private void InitializeTrayIcon()
+    {
+        _notifyIcon = new System.Windows.Forms.NotifyIcon();
+        try
+        {
+            string exePath = System.Diagnostics.Process.GetCurrentProcess().MainModule?.FileName ?? "";
+            if (!string.IsNullOrEmpty(exePath) && File.Exists(exePath))
+            {
+                _notifyIcon.Icon = System.Drawing.Icon.ExtractAssociatedIcon(exePath);
+            }
+            else
+            {
+                _notifyIcon.Icon = System.Drawing.SystemIcons.Application;
+            }
+        }
+        catch
+        {
+            _notifyIcon.Icon = System.Drawing.SystemIcons.Application;
+        }
+
+        _notifyIcon.Text = "Ratinho Desktop";
+        _notifyIcon.Visible = true;
+
+        // Double click on tray icon toggles window visibility
+        _notifyIcon.DoubleClick += (s, e) => ToggleWindowVisibility();
+
+        // Context menu for the tray icon
+        var contextMenu = new System.Windows.Forms.ContextMenuStrip();
+        
+        var showHideItem = new System.Windows.Forms.ToolStripMenuItem("Mostrar / Ocultar");
+        showHideItem.Click += (s, e) => ToggleWindowVisibility();
+        contextMenu.Items.Add(showHideItem);
+        
+        contextMenu.Items.Add(new System.Windows.Forms.ToolStripSeparator());
+        
+        var exitItem = new System.Windows.Forms.ToolStripMenuItem("Sair");
+        exitItem.Click += (s, e) => Close();
+        contextMenu.Items.Add(exitItem);
+
+        _notifyIcon.ContextMenuStrip = contextMenu;
+    }
+
+    private void ToggleWindowVisibility()
+    {
+        if (this.Visibility == Visibility.Visible)
+        {
+            this.Hide();
+        }
+        else
+        {
+            this.Show();
+            if (this.WindowState == WindowState.Minimized)
+            {
+                this.WindowState = WindowState.Normal;
+            }
+            this.Activate();
+        }
+    }
+
+    protected override void OnSourceInitialized(EventArgs e)
+    {
+        base.OnSourceInitialized(e);
+
+        var helper = new WindowInteropHelper(this);
+        _source = HwndSource.FromHwnd(helper.Handle);
+        if (_source != null)
+        {
+            _source.AddHook(HwndHook);
+            RegisterHotKey(helper.Handle, HOTKEY_ID, MOD_CONTROL | MOD_ALT, VK_R);
+        }
+    }
+
+    private IntPtr HwndHook(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
+    {
+        const int WM_HOTKEY = 0x0312;
+        if (msg == WM_HOTKEY && wParam.ToInt32() == HOTKEY_ID)
+        {
+            ToggleWindowVisibility();
+            handled = true;
+        }
+        return IntPtr.Zero;
+    }
+
+    protected override void OnClosed(EventArgs e)
+    {
+        // Stop music
         if (_backgroundMusic != null)
         {
             _backgroundMusic.Stop();
             _backgroundMusic.Close();
         }
-        Close();
+
+        // Unregister global hotkey
+        if (_source != null)
+        {
+            _source.RemoveHook(HwndHook);
+            var helper = new WindowInteropHelper(this);
+            UnregisterHotKey(helper.Handle, HOTKEY_ID);
+        }
+
+        // Dispose system tray icon
+        if (_notifyIcon != null)
+        {
+            _notifyIcon.Visible = false;
+            _notifyIcon.Dispose();
+        }
+
+        base.OnClosed(e);
     }
 }

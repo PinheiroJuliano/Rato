@@ -12,7 +12,7 @@
         AllowsTransparency="True"
         Background="Transparent"
         Topmost="True"
-        ShowInTaskbar="True"
+        ShowInTaskbar="False"
         ResizeMode="NoResize"
         SizeToContent="WidthAndHeight"
         Loaded="Window_Loaded">
@@ -75,6 +75,7 @@
                         </MenuItem>
                         
                         <MenuItem Header="Sempre no Topo" x:Name="MenuTopmost" IsCheckable="True" IsChecked="True" Click="Topmost_Click"/>
+                        <MenuItem Header="Ocultar (Ctrl+Alt+R)" Click="Ocultar_Click" />
                         <Separator />
                         
                         <MenuItem Header="Sair" Click="Sair_Click" FontWeight="Bold"/>
