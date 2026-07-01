@@ -53,6 +53,8 @@
                             </Style>
                         </ContextMenu.Resources>
                         
+                        <MenuItem Header="Bichinho" x:Name="MenuBichinho" />
+
                         <MenuItem Header="Tamanho">
                             <MenuItem Header="Pequeno (100px)" x:Name="MenuSizeSmall" Click="Size_Pequeno_Click" />
                             <MenuItem Header="Médio (200px)" x:Name="MenuSizeMedium" IsChecked="True" Click="Size_Medio_Click" />
@@ -63,9 +65,12 @@
                         <Separator />
                         
                         <MenuItem Header="Efeitos Sonoros">
-                            <MenuItem Header="Squeak ao Clicar" x:Name="MenuSoundClick" IsCheckable="True" IsChecked="True" Click="SoundClick_Click"/>
+                            <MenuItem Header="Som ao Clicar" x:Name="MenuSoundClick" IsCheckable="True" IsChecked="True" Click="SoundClick_Click"/>
                             <MenuItem Header="Música de Fundo (Retro)" x:Name="MenuMusic" IsCheckable="True" Click="Music_Click"/>
                         </MenuItem>
+
+                        <MenuItem Header="Sincronizar com a Música (Beta)" x:Name="MenuAudioReactive" IsCheckable="True" Click="AudioReactive_Click"
+                                  ToolTip="Faz o bichinho reagir ao ritmo de qualquer áudio tocando no seu computador."/>
                         
                         <MenuItem Header="Opacidade">
                             <MenuItem Header="100%" Tag="1.0" Click="Opacity_Click" />

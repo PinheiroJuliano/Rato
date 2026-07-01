@@ -11,10 +11,17 @@
 
   <ItemGroup>
     <PackageReference Include="WpfAnimatedGif" Version="2.0.2" />
+    <PackageReference Include="NAudio" Version="2.2.1" />
   </ItemGroup>
 
   <ItemGroup>
     <Resource Include="Assets\rato.gif" />
+    <Resource Include="Assets\Novos\vaca.gif" />
+    <Resource Include="Assets\Novos\cat.gif" />
+    <Resource Include="Assets\Novos\silly-cat-dance.gif" />
+    <Resource Include="Assets\Novos\dancing-dance.gif" />
+    <Resource Include="Assets\Novos\limpando.gif" />
+    <Resource Include="Assets\Novos\eisque.gif" />
   </ItemGroup>
 
 </Project>

@@ -1,37 +1,48 @@
 using System;
 using System.IO;
 using System.Text;
+using RatinhoDesktop.Models;
 
 namespace RatinhoDesktop;
 
 public static class SoundGenerator
 {
-    public static string GenerateSqueakFile(string targetDir)
+    /// <summary>
+    /// Gera (uma única vez, com cache em disco) o som de clique correspondente a cada
+    /// personagem, para que cada bichinho selecionado tenha um efeito sonoro próprio
+    /// sem precisar de nenhum arquivo de áudio externo.
+    /// </summary>
+    public static string GenerateCharacterSoundFile(string targetDir, SoundCharacter character)
     {
-        string filePath = Path.Combine(targetDir, "squeak.wav");
+        string fileName = character switch
+        {
+            SoundCharacter.Squeak => "squeak.wav",
+            SoundCharacter.Moo => "moo.wav",
+            SoundCharacter.Meow => "meow.wav",
+            SoundCharacter.Pop => "pop.wav",
+            SoundCharacter.Chime => "chime.wav",
+            _ => "squeak.wav"
+        };
+
+        string filePath = Path.Combine(targetDir, fileName);
         if (File.Exists(filePath))
             return filePath;
 
         try
         {
             Directory.CreateDirectory(targetDir);
-            int sampleRate = 44100;
-            double duration = 0.15; // 150ms
-            int numSamples = (int)(sampleRate * duration);
-            short[] pcm = new short[numSamples];
 
-            for (int i = 0; i < numSamples; i++)
+            short[] pcm = character switch
             {
-                double t = (double)i / sampleRate;
-                // Pitch sweep upward from 1200Hz to 3200Hz
-                double frequency = 1200 + (2000 * (t / duration));
-                // Amplitude envelope (bell shape to avoid clicks)
-                double volume = Math.Sin(Math.PI * t / duration);
-                double angle = 2 * Math.PI * frequency * t;
-                pcm[i] = (short)(25000 * volume * Math.Sin(angle));
-            }
+                SoundCharacter.Squeak => BuildSqueakPcm(),
+                SoundCharacter.Moo => BuildMooPcm(),
+                SoundCharacter.Meow => BuildMeowPcm(),
+                SoundCharacter.Pop => BuildPopPcm(),
+                SoundCharacter.Chime => BuildChimePcm(),
+                _ => BuildSqueakPcm()
+            };
 
-            byte[] wavBytes = CreateWav(pcm, sampleRate);
+            byte[] wavBytes = CreateWav(pcm, 44100);
             File.WriteAllBytes(filePath, wavBytes);
         }
         catch
@@ -40,6 +51,126 @@ public static class SoundGenerator
         }
 
         return filePath;
+    }
+
+    private static short[] BuildSqueakPcm()
+    {
+        int sampleRate = 44100;
+        double duration = 0.15;
+        int numSamples = (int)(sampleRate * duration);
+        short[] pcm = new short[numSamples];
+
+        for (int i = 0; i < numSamples; i++)
+        {
+            double t = (double)i / sampleRate;
+            double frequency = 1200 + (2000 * (t / duration));
+            double volume = Math.Sin(Math.PI * t / duration);
+            double angle = 2 * Math.PI * frequency * t;
+            pcm[i] = (short)(25000 * volume * Math.Sin(angle));
+        }
+
+        return pcm;
+    }
+
+    private static short[] BuildMooPcm()
+    {
+        // Som grave e prolongado, com vibrato, lembrando um "muu".
+        int sampleRate = 44100;
+        double duration = 0.65;
+        int numSamples = (int)(sampleRate * duration);
+        short[] pcm = new short[numSamples];
+
+        for (int i = 0; i < numSamples; i++)
+        {
+            double t = (double)i / sampleRate;
+            double progress = t / duration;
+
+            // Frequência base cai suavemente (110Hz -> 85Hz) com um leve vibrato.
+            double vibrato = Math.Sin(2 * Math.PI * 6.0 * t) * 4.0;
+            double frequency = (110 - (25 * progress)) + vibrato;
+
+            // Envelope: ataque rápido, sustentação, e decaimento no final.
+            double volume = Math.Min(1.0, t / 0.05) * Math.Min(1.0, (duration - t) / 0.2);
+
+            // Onda dente-de-serra simplificada (harmônicos extras) para timbre mais "grave/rouco".
+            double angle = 2 * Math.PI * frequency * t;
+            double fundamental = Math.Sin(angle);
+            double secondHarmonic = 0.4 * Math.Sin(2 * angle);
+            double thirdHarmonic = 0.2 * Math.Sin(3 * angle);
+
+            pcm[i] = (short)(18000 * volume * (fundamental + secondHarmonic + thirdHarmonic));
+        }
+
+        return pcm;
+    }
+
+    private static short[] BuildMeowPcm()
+    {
+        // Duas sílabas curtas com curva de pitch subindo e depois descendo, lembrando um miado.
+        int sampleRate = 44100;
+        double duration = 0.4;
+        int numSamples = (int)(sampleRate * duration);
+        short[] pcm = new short[numSamples];
+
+        for (int i = 0; i < numSamples; i++)
+        {
+            double t = (double)i / sampleRate;
+            double progress = t / duration;
+
+            // Curva de pitch em "sino": sobe até a metade e desce (formato de miado).
+            double frequency = 500 + (500 * Math.Sin(Math.PI * progress));
+
+            double volume = Math.Sin(Math.PI * progress);
+            double angle = 2 * Math.PI * frequency * t;
+
+            pcm[i] = (short)(20000 * volume * Math.Sin(angle));
+        }
+
+        return pcm;
+    }
+
+    private static short[] BuildPopPcm()
+    {
+        // Blip curto e alegre, usado para bichinhos "genéricos" (dança/limpeza/etc).
+        int sampleRate = 44100;
+        double duration = 0.12;
+        int numSamples = (int)(sampleRate * duration);
+        short[] pcm = new short[numSamples];
+
+        for (int i = 0; i < numSamples; i++)
+        {
+            double t = (double)i / sampleRate;
+            double frequency = 900 - (400 * (t / duration));
+            double volume = Math.Sin(Math.PI * t / duration);
+            double angle = 2 * Math.PI * frequency * t;
+            pcm[i] = (short)(22000 * volume * Math.Sin(angle));
+        }
+
+        return pcm;
+    }
+
+    private static short[] BuildChimePcm()
+    {
+        // Som tipo "sininho", com fundamental + oitava, e decaimento exponencial.
+        int sampleRate = 44100;
+        double duration = 0.45;
+        int numSamples = (int)(sampleRate * duration);
+        short[] pcm = new short[numSamples];
+
+        double baseFreq = 1046.5; // C6
+
+        for (int i = 0; i < numSamples; i++)
+        {
+            double t = (double)i / sampleRate;
+            double volume = Math.Exp(-6.0 * t / duration);
+
+            double fundamental = Math.Sin(2 * Math.PI * baseFreq * t);
+            double octave = 0.5 * Math.Sin(2 * Math.PI * baseFreq * 2 * t);
+
+            pcm[i] = (short)(20000 * volume * (fundamental + octave));
+        }
+
+        return pcm;
     }
 
     public static string GenerateMelodyFile(string targetDir)

@@ -7,7 +7,11 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using System.Windows.Threading;
+using RatinhoDesktop.Models;
+using RatinhoDesktop.Services;
+using WpfAnimatedGif;
 
 namespace RatinhoDesktop;
 
@@ -18,9 +22,8 @@ public partial class MainWindow : Window
     private double _vy = 4.0;
     private bool _isDvdMode = false;
 
-    private string? _squeakPath;
     private string? _melodyPath;
-    private SoundPlayer? _squeakPlayer;
+    private SoundPlayer? _clickSoundPlayer;
     private MediaPlayer? _backgroundMusic;
 
     private bool _squeakEnabled = true;
@@ -29,6 +32,22 @@ public partial class MainWindow : Window
 
     private System.Windows.Forms.NotifyIcon? _notifyIcon;
     private HwndSource? _source;
+
+    // --- Seleção de bichinho ---
+    private PetDefinition _currentPet = PetDefinition.Catalog[0];
+    private readonly System.Collections.Generic.Dictionary<string, System.Windows.Controls.MenuItem> _petMenuItems = new();
+
+    // --- Configurações persistidas ---
+    private AppSettings _settings = new();
+
+    // --- Transform combinado (espelhamento do modo DVD + "pulso" de batida) ---
+    private readonly ScaleTransform _scaleTransform = new ScaleTransform(1.0, 1.0);
+    private double _flipSign = 1.0;
+    private double _pulseScale = 1.0;
+    private DispatcherTimer? _pulseResetTimer;
+
+    // --- Sincronização com a música tocando no computador ---
+    private AudioReactiveService? _audioReactive;
 
     [DllImport("user32.dll")]
     private static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
@@ -48,23 +67,30 @@ public partial class MainWindow : Window
 
     private void Window_Loaded(object sender, RoutedEventArgs e)
     {
-        // Posicionar o ratinho no centro da tela inicialmente
+        // Carrega as preferências salvas na última execução (se existirem)
+        _settings = SettingsManager.Load();
+
+        // Aplica o transform combinado (flip + pulso) desde o início
+        RatoImage.RenderTransform = _scaleTransform;
+
+        // Monta o submenu "Bichinho" com todos os gifs disponíveis
+        BuildPetMenu();
+
+        // Seleciona o bichinho salvo (ou o padrão, o ratinho)
+        SelectPet(PetDefinition.GetByIdOrDefault(_settings.PetId), playClickSound: false, persist: false);
+
+        // Posicionar o bichinho no centro da tela inicialmente
         double screenWidth = SystemParameters.PrimaryScreenWidth;
         double screenHeight = SystemParameters.PrimaryScreenHeight;
         this.Left = (screenWidth - this.Width) / 2;
         this.Top = (screenHeight - this.Height) / 2;
 
-        // Gerar os sons sintetizados na pasta de execução local
-        string assetsPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Assets");
-        _squeakPath = SoundGenerator.GenerateSqueakFile(assetsPath);
-        _melodyPath = SoundGenerator.GenerateMelodyFile(assetsPath);
+        // Aplica tamanho salvo
+        SetSize(_settings.Size, updateMenu: true);
 
-        // Inicializar SoundPlayer para o squeak
-        if (File.Exists(_squeakPath))
-        {
-            _squeakPlayer = new SoundPlayer(_squeakPath);
-            _squeakPlayer.Load();
-        }
+        // Gerar a música de fundo sintetizada na pasta de execução local
+        string assetsPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Assets");
+        _melodyPath = SoundGenerator.GenerateMelodyFile(assetsPath);
 
         // Inicializar MediaPlayer para a música de fundo
         if (File.Exists(_melodyPath))
@@ -72,7 +98,7 @@ public partial class MainWindow : Window
             _backgroundMusic = new MediaPlayer();
             _backgroundMusic.Open(new Uri(_melodyPath));
             _backgroundMusic.Volume = 0.35; // volume confortável
-            
+
             // Loop da música
             _backgroundMusic.MediaEnded += (s, ev) =>
             {
@@ -84,6 +110,20 @@ public partial class MainWindow : Window
             };
         }
 
+        // Aplica preferências salvas de som/música/opacidade/topmost
+        _squeakEnabled = _settings.SqueakEnabled;
+        MenuSoundClick.IsChecked = _squeakEnabled;
+
+        _musicEnabled = _settings.MusicEnabled;
+        MenuMusic.IsChecked = _musicEnabled;
+        if (_musicEnabled) _backgroundMusic?.Play();
+
+        _currentOpacity = _settings.Opacity;
+        this.Opacity = _currentOpacity;
+
+        this.Topmost = _settings.Topmost;
+        MenuTopmost.IsChecked = _settings.Topmost;
+
         // Configurar timer para o Modo DVD (aprox. 60 FPS)
         _dvdTimer = new DispatcherTimer
         {
@@ -93,6 +133,84 @@ public partial class MainWindow : Window
 
         // Inicializar o ícone na bandeja do sistema (System Tray)
         InitializeTrayIcon();
+
+        // Reativa a sincronização com música se estava ligada da última vez
+        if (_settings.AudioReactiveEnabled)
+        {
+            MenuAudioReactive.IsChecked = true;
+            StartAudioReactive();
+        }
+    }
+
+    // --- Seleção de bichinho ---
+
+    private void BuildPetMenu()
+    {
+        MenuBichinho.Items.Clear();
+        _petMenuItems.Clear();
+
+        foreach (var pet in PetDefinition.Catalog)
+        {
+            var item = new System.Windows.Controls.MenuItem
+            {
+                Header = pet.DisplayName,
+                IsCheckable = true,
+                Tag = pet.Id
+            };
+            item.Click += PetMenuItem_Click;
+            MenuBichinho.Items.Add(item);
+            _petMenuItems[pet.Id] = item;
+        }
+    }
+
+    private void PetMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is System.Windows.Controls.MenuItem item && item.Tag is string petId)
+        {
+            var pet = PetDefinition.GetByIdOrDefault(petId);
+            SelectPet(pet, playClickSound: true, persist: true);
+        }
+    }
+
+    private void SelectPet(PetDefinition pet, bool playClickSound, bool persist)
+    {
+        _currentPet = pet;
+
+        // Troca o gif animado exibido
+        var bitmap = new BitmapImage();
+        bitmap.BeginInit();
+        bitmap.UriSource = new Uri(pet.PackUri, UriKind.Absolute);
+        bitmap.EndInit();
+        ImageBehavior.SetAnimatedSource(RatoImage, bitmap);
+
+        // Atualiza o "check" no submenu para refletir a seleção atual
+        foreach (var kvp in _petMenuItems)
+        {
+            kvp.Value.IsChecked = kvp.Key == pet.Id;
+        }
+
+        // Gera (se necessário) e carrega o som de clique específico deste bichinho
+        string assetsPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Assets");
+        string soundPath = SoundGenerator.GenerateCharacterSoundFile(assetsPath, pet.Sound);
+
+        _clickSoundPlayer?.Dispose();
+        _clickSoundPlayer = null;
+        if (File.Exists(soundPath))
+        {
+            _clickSoundPlayer = new SoundPlayer(soundPath);
+            _clickSoundPlayer.Load();
+        }
+
+        if (playClickSound)
+        {
+            PlayClickSound();
+        }
+
+        if (persist)
+        {
+            _settings.PetId = pet.Id;
+            SettingsManager.Save(_settings);
+        }
     }
 
     private void RatoImage_MouseDown(object sender, MouseButtonEventArgs e)
@@ -105,7 +223,7 @@ public partial class MainWindow : Window
             }
             else
             {
-                PlaySqueak();
+                PlayClickSound();
                 try
                 {
                     DragMove();
@@ -118,13 +236,13 @@ public partial class MainWindow : Window
         }
     }
 
-    private void PlaySqueak()
+    private void PlayClickSound()
     {
-        if (_squeakEnabled && _squeakPlayer != null)
+        if (_squeakEnabled && _clickSoundPlayer != null)
         {
             try
             {
-                _squeakPlayer.Play();
+                _clickSoundPlayer.Play();
             }
             catch
             {
@@ -195,24 +313,17 @@ public partial class MainWindow : Window
             bounced = true;
         }
 
-        // Atualizar rotação/espelhamento horizontal com base na direção do movimento
+        // Atualizar espelhamento horizontal com base na direção do movimento
         // Se estiver indo para a esquerda (vx < 0), espelha horizontalmente.
-        if (RatoImage.RenderTransform is ScaleTransform scaleTransform)
-        {
-            scaleTransform.ScaleX = _vx < 0 ? -1 : 1;
-        }
-        else
-        {
-            // Cria caso não exista (inicialmente configuramos RotateTransform, vamos substituir por ScaleTransform)
-            RatoImage.RenderTransform = new ScaleTransform(_vx < 0 ? -1 : 1, 1);
-        }
+        _flipSign = _vx < 0 ? -1 : 1;
+        ApplyTransform();
 
         this.Left = left;
         this.Top = top;
 
         if (bounced)
         {
-            PlaySqueak();
+            PlayClickSound();
             
             // Efeito visual de colisão (mudar levemente a opacidade temporariamente)
             this.Opacity = _currentOpacity * 0.8;
@@ -229,32 +340,131 @@ public partial class MainWindow : Window
         }
     }
 
+    // --- Sincronização com o ritmo da música ---
+
+    private void AudioReactive_Click(object sender, RoutedEventArgs e)
+    {
+        if (MenuAudioReactive.IsChecked)
+        {
+            StartAudioReactive();
+        }
+        else
+        {
+            StopAudioReactive();
+        }
+
+        _settings.AudioReactiveEnabled = MenuAudioReactive.IsChecked;
+        SettingsManager.Save(_settings);
+    }
+
+    private void StartAudioReactive()
+    {
+        _audioReactive ??= new AudioReactiveService();
+        _audioReactive.BeatDetected -= OnBeatDetectedFromAudioThread;
+        _audioReactive.BeatDetected += OnBeatDetectedFromAudioThread;
+
+        bool started = _audioReactive.Start();
+        if (!started)
+        {
+            MenuAudioReactive.IsChecked = false;
+            System.Windows.MessageBox.Show(
+                "Não foi possível capturar o áudio do sistema. Verifique se há algum " +
+                "dispositivo de saída de áudio padrão configurado no Windows.",
+                "Ratinho Desktop",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+        }
+    }
+
+    private void StopAudioReactive()
+    {
+        _audioReactive?.Stop();
+        ResetPulse();
+    }
+
+    // Este evento chega em uma thread de captura de áudio (não é a thread da UI),
+    // então precisamos despachar para a Dispatcher antes de mexer em qualquer controle.
+    private void OnBeatDetectedFromAudioThread()
+    {
+        Dispatcher.BeginInvoke(new Action(PulseOnBeat));
+    }
+
+    private void PulseOnBeat()
+    {
+        double intensity = _audioReactive?.LastBeatIntensity ?? 1.0;
+
+        // "Pulo" visual proporcional à força da batida, com um teto para não ficar exagerado.
+        double bump = Math.Min(0.35, 0.12 * intensity);
+        _pulseScale = 1.0 + bump;
+        ApplyTransform();
+
+        // Acelera brevemente a reprodução do gif, dando a sensação de "dançar" no tempo da música.
+        double speedRatio = 1.0 + Math.Min(0.8, 0.3 * intensity);
+        ImageBehavior.SetAnimationSpeedRatio(RatoImage, speedRatio);
+
+        _pulseResetTimer?.Stop();
+        _pulseResetTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(140) };
+        _pulseResetTimer.Tick += (s, ev) =>
+        {
+            ResetPulse();
+            _pulseResetTimer?.Stop();
+        };
+        _pulseResetTimer.Start();
+    }
+
+    private void ResetPulse()
+    {
+        _pulseScale = 1.0;
+        ApplyTransform();
+        ImageBehavior.SetAnimationSpeedRatio(RatoImage, 1.0);
+    }
+
+    private void ApplyTransform()
+    {
+        _scaleTransform.ScaleX = _flipSign * _pulseScale;
+        _scaleTransform.ScaleY = _pulseScale;
+    }
+
     // --- Ações do Menu de Contexto ---
 
     private void Size_Pequeno_Click(object sender, RoutedEventArgs e)
     {
-        SetSize(100);
-        UpdateSizeMenuChecked(MenuSizeSmall);
+        SetSize(100, updateMenu: true);
+        _settings.Size = 100;
+        SettingsManager.Save(_settings);
     }
 
     private void Size_Medio_Click(object sender, RoutedEventArgs e)
     {
-        SetSize(200);
-        UpdateSizeMenuChecked(MenuSizeMedium);
+        SetSize(200, updateMenu: true);
+        _settings.Size = 200;
+        SettingsManager.Save(_settings);
     }
 
     private void Size_Grande_Click(object sender, RoutedEventArgs e)
     {
-        SetSize(320);
-        UpdateSizeMenuChecked(MenuSizeLarge);
+        SetSize(320, updateMenu: true);
+        _settings.Size = 320;
+        SettingsManager.Save(_settings);
     }
 
-    private void SetSize(double size)
+    private void SetSize(double size, bool updateMenu)
     {
         RatoImage.Width = size;
         RatoImage.Height = size;
         this.Width = size + 10; // adiciona padding
         this.Height = size + 10;
+
+        if (updateMenu)
+        {
+            System.Windows.Controls.MenuItem target = size switch
+            {
+                <= 100 => MenuSizeSmall,
+                >= 320 => MenuSizeLarge,
+                _ => MenuSizeMedium
+            };
+            UpdateSizeMenuChecked(target);
+        }
     }
 
     private void UpdateSizeMenuChecked(System.Windows.Controls.MenuItem checkedItem)
@@ -273,6 +483,8 @@ public partial class MainWindow : Window
     private void SoundClick_Click(object sender, RoutedEventArgs e)
     {
         _squeakEnabled = MenuSoundClick.IsChecked;
+        _settings.SqueakEnabled = _squeakEnabled;
+        SettingsManager.Save(_settings);
     }
 
     private void Music_Click(object sender, RoutedEventArgs e)
@@ -290,6 +502,9 @@ public partial class MainWindow : Window
                 _backgroundMusic.Pause();
             }
         }
+
+        _settings.MusicEnabled = _musicEnabled;
+        SettingsManager.Save(_settings);
     }
 
     private void Opacity_Click(object sender, RoutedEventArgs e)
@@ -298,12 +513,17 @@ public partial class MainWindow : Window
         {
             _currentOpacity = val;
             this.Opacity = val;
+
+            _settings.Opacity = val;
+            SettingsManager.Save(_settings);
         }
     }
 
     private void Topmost_Click(object sender, RoutedEventArgs e)
     {
         this.Topmost = MenuTopmost.IsChecked;
+        _settings.Topmost = this.Topmost;
+        SettingsManager.Save(_settings);
     }
 
     private void Sair_Click(object sender, RoutedEventArgs e)
@@ -407,6 +627,10 @@ public partial class MainWindow : Window
             _backgroundMusic.Stop();
             _backgroundMusic.Close();
         }
+
+        // Stop audio-reactive capture
+        _audioReactive?.Dispose();
+        _audioReactive = null;
 
         // Unregister global hotkey
         if (_source != null)
