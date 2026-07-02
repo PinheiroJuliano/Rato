@@ -1,0 +1,12 @@
+## Build outputs
+[Bb]in/
+[Oo]bj/
+
+## Audio files
+*.wav
+
+## IDE files
+.vs/
+.idea/
+*.user
+*.suo
