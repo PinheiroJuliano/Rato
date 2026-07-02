@@ -60,6 +60,8 @@ O executável único compilado ficará em:
 
 *Nota: Ao executar em uma nova pasta, o aplicativo gera automaticamente os arquivos de som padrão dentro de uma subpasta `Assets/`. Certifique-se de que a aplicação tenha permissão de escrita no diretório onde está sendo executada (evite executar diretamente de pastas restritas como `C:\Program Files` sem privilégios de administrador).*
 
+> ⚠️ **Atenção (Git):** As pastas de build (`bin/` e `obj/`) e os arquivos de áudio temporários/gerados (`*.wav`) estão devidamente configurados no `.gitignore` para evitar o upload de arquivos binários pesados ou gerados localmente para o repositório do GitHub.
+
 ---
 
 ## ⚙️ Como Configurar Atalho e Inicialização no Windows
@@ -87,6 +89,7 @@ Caso queira que o Ratinho inicie automaticamente sempre que você ligar o comput
 
 ```
 Rato/
+├── .gitignore                     # Configuração de arquivos ignorados pelo Git (bin/, obj/, *.wav, etc)
 ├── README.md                      # Este arquivo
 └── RatinhoDesktop/
     ├── RatinhoDesktop.csproj      # Configuração do projeto e dependências NuGet
